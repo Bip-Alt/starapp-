@@ -1,14 +1,45 @@
 # AppStar.  Run with:  streamlit run star_app.py
 #
-# Python runs once: it precomputes the star's state over a grid of
-# masses and ages, then ships one Altair chart whose sliders are
-# Vega parameters. Dragging them filters the grid in the browser,
-# so the star updates live, with no Python rerun.
+# Python runs once per metallicity: it precomputes the star's state over
+# a grid of masses and ages, then ships one Altair chart whose mass and
+# age sliders are Vega parameters. Dragging them filters the grid in the
+# browser, so the star updates live, with no Python rerun. Releasing the
+# metallicity slider (a Streamlit widget) reruns the script and rebuilds
+# the grid at the new Z.
 #
-# Extension (see the Metallicity section of Part D): add a
-# metallicity slider with st.slider and thread `zr` through the two
-# marked lines, then add the pair-instability branch. Mass and age
-# stay live; a new metallicity rebuilds the grid on release.
+# ======================================================================
+#Updated code as required in the exercise  (Part D exercise)
+# ----------------------------------------------------------------------
+# I have catptured this as  "# CHANGED" and "# NEW" to find every edit.
+#
+#   1. Metallicity slider
+#      - The constant Z = 0.02 is replaced by a Streamlit slider (lz).
+#      - A caption shows Z, the neutron star / black hole boundary,
+#        and whether the pair-instability window is open.
+#
+#   2. Pair-instability branch
+#      - star_state() gains a "no remnant" phase for stars of
+#        140-260 suns when Z < 0.001.
+#      - The grid loop draws that phase black on black (nothing left).
+#
+#   3. Hertzsprung-Russell diagram replaces the phase plane
+#      - The whole right-hand phase-plane section is removed.
+#      - New HR diagram: temperature (reversed, log) against
+#        luminosity (log, 1e-4 to 1e6 suns).
+#      - Layers: main-sequence band, white-dwarf cooling track,
+#        spectral-class rules and letters, region labels, the Sun,
+#        and your star riding the mass and age sliders.
+#
+#   5. Bug fix after testing
+#      - Default age slider 0.66 -> 0.68 so the star appears on load
+#        and after each metallicity rerun.
+#      - Dashed solar-metallicity reference line on the HR diagram so
+#        the metallicity shift is visible.
+#
+#   4. Housekeeping
+#      - st.altair_chart: deprecated use_container_width=False is
+#        replaced by width="content".
+# ======================================================================
 
 import math
 
@@ -39,8 +70,20 @@ st.markdown("### AppStar")
 
 alt.data_transformers.disable_max_rows()
 
-Z = 0.02          # metallicity; extension: make this a slider
+# ---- CHANGED (1): metallicity is now a Streamlit slider --------------
+# Was:   Z = 0.02          # metallicity; extension: make this a slider
+lz = st.slider("log10 metallicity", -4.0, -1.4, -1.7, step=0.05)
+Z = 10 ** lz
 zr = Z / 0.02
+
+# ---- NEW (1, 2): pair-instability limits and a status caption --------
+PAIR_LO, PAIR_HI = 140.0, 260.0
+bh_boundary = 18 + 7 * zr
+st.caption(
+    f"Z = {Z:.5f} ({zr:.2f} × solar)  |  "
+    f"neutron star / black hole boundary: {bh_boundary:.1f} suns  |  "
+    f"pair-instability window ({PAIR_LO:.0f}–{PAIR_HI:.0f} suns): "
+    f"{'open' if Z < 0.001 else 'closed'}")
 
 
 def bb_rgb(T):
@@ -85,6 +128,9 @@ def star_state(mass, age):
         phase = "blue supergiant" if frac < 0.4 else "red supergiant"
     elif age <= 1.10 * t_g:
         phase = "supernova"
+    # ---- NEW (2): pair instability, the star blows itself apart ------
+    elif Z < 0.001 and PAIR_LO <= mass <= PAIR_HI:
+        phase = "no remnant"
     elif mass < 18 + 7 * zr:            # remnant boundary  [uses zr]
         phase = "neutron star"
     else:
@@ -118,6 +164,9 @@ def star_state(mass, age):
         # and its ~5e9 suns would stretch an HR luminosity axis by four
         # decades to hold one transient point
         T_show, L_show, R_show = 8000.0, None, None
+    # ---- NEW (2): nothing is left, so no temperature, light or size --
+    elif phase == "no remnant":
+        T_show, L_show, R_show = None, None, None
     elif phase == "neutron star":
         T_show, L_show, R_show = 1e6, None, 1.7e-5
     elif phase == "black hole":
@@ -141,6 +190,9 @@ for lm in lms:
             colour, px = "#CDE7FF", 6.0
         elif phase == "supernova":
             colour, px = "#FFD27D", 150.0
+        # ---- NEW (2): draw "no remnant" black on black ---------------
+        elif phase == "no remnant":
+            colour, px = "rgb(0,0,0)", 5.0
         else:
             colour = rgb_str(T)
             px = float(np.clip(14 + 26 * (np.log10(R) + 2.2), 5, 150))
@@ -159,12 +211,17 @@ grid = pd.DataFrame(rows)
 
 m_sel = alt.param(name="m_sel", value=0.0, bind=alt.binding_range(
     min=-1.0, max=2.45, step=0.05, name="log10 mass (suns)  "))
-a_sel = alt.param(name="a_sel", value=0.66, bind=alt.binding_range(
+# ---- CHANGED (5): default age 0.66 -> 0.68 ---------------------------
+# The age grid runs -4.0, -3.94, ... so it holds 0.62 and 0.68 but not
+# 0.66. With 0.66 the pick filter matched no row, so the star vanished
+# from both panels on load and after every metallicity rerun (a rerun
+# resets the mass and age sliders to their defaults).
+a_sel = alt.param(name="a_sel", value=0.68, bind=alt.binding_range(
     min=-4.0, max=3.56, step=0.06, name="log10 age (Gyr)  "))
 pick = ("abs(datum.lm - m_sel) < 0.02"
         " && abs(datum.la - a_sel) < 0.02")
 
-# ---- the portrait ----------------------------------------------------
+# ---- the portrait (unchanged) ----------------------------------------
 CX, CY = 160, 168
 disc = alt.Chart(grid).transform_filter(pick).mark_circle(
     opacity=1).encode(
@@ -198,138 +255,127 @@ portrait = alt.layer(
     readout("life:N", 422),
 ).properties(width=320, height=440)
 
-# ---- the phase plane, with the star riding the sliders ---------------
-Ml = np.unique(np.concatenate([np.geomspace(0.1, 300, 160),
-                               [0.25, 8.0, 25.0]]))
-pre_l = 0.03 * Ml ** -1.5
-ms_l = (10.0 * Ml ** -2.5 * (1 + 2.5 * np.exp(-Ml / 0.12)) + 0.0025)
-g_l = 1.15 * ms_l
-Y0 = 1e-4
-Y1 = 1.15 * (10.0 * 0.1 ** -2.5 * (1 + 2.5 * np.exp(-0.1 / 0.12))
-             + 0.0025)
+# ======================================================================
+# CHANGED (3): the whole phase-plane section that was here is REMOVED
+# and replaced by the Hertzsprung-Russell diagram below.
+# (Removed: Ml/pre_l/ms_l/g_l arrays, region(), stage areas, supernova
+#  line, age-of-universe rule, plane labels, class labels, Sun marker,
+#  the "you" star on mass-age axes, and the `plane` layer.)
+# ======================================================================
 
-cls_edge_T = [3700, 5200, 6000, 7500, 10000, 30000]
-cls_edge_M = [(t / SUN_T) ** (1 / 0.475) for t in cls_edge_T]
-CLS_T = {"M": 3050, "K": 4400, "G": 5500, "F": 6750, "A": 8700,
-         "B": 17000, "O": 40000}
-cls_bounds = [0.1] + cls_edge_M + [300.0]
+# ---- NEW (3): axes for the HR diagram --------------------------------
+L_MIN, L_MAX = 1e-4, 1e6
+T_MIN, T_MAX = 1500, 200000
 
-MASS_SCALE = alt.Scale(type="log", domain=[0.1, 300], nice=False)
-AGE_SCALE = alt.Scale(type="log", domain=[Y0, Y1], nice=False)
-PX = alt.X("mass:Q", title="mass (suns), log scale",
-           scale=MASS_SCALE,
-           axis=alt.Axis(values=[0.1, 1, 10, 100],
-                         gridColor="#2b303b",
-                         labelColor="#c8c8c8", titleColor="#c8c8c8"))
-PY = alt.Y("lo:Q", title="age (billion years), log scale",
-           scale=AGE_SCALE,
-           axis=alt.Axis(values=[1e-3, 1e-2, 0.1, 1, 10, 100, 1000],
-                         gridColor="#2b303b",
-                         labelColor="#c8c8c8", titleColor="#c8c8c8"))
+T_SCALE = alt.Scale(type="log", domain=[T_MIN, T_MAX], reverse=True,
+                    nice=False, clamp=True)      # hot on the left
+L_SCALE = alt.Scale(type="log", domain=[L_MIN, L_MAX], nice=False,
+                    clamp=True)
+AXIS_STYLE = dict(gridColor="#2b303b", labelColor="#c8c8c8",
+                  titleColor="#c8c8c8")
+HX = alt.X("temp_K:Q", title="surface temperature (K), hot on the left",
+           scale=T_SCALE,
+           axis=alt.Axis(values=[2000, 5000, 10000, 20000, 50000, 100000],
+                         format="~s", **AXIS_STYLE))
+HY = alt.Y("lum:Q", title="luminosity (suns), log scale",
+           scale=L_SCALE,
+           axis=alt.Axis(values=[1e-4, 1e-2, 1, 1e2, 1e4, 1e6],
+                         format="~g", **AXIS_STYLE))
 
+# ---- NEW (3): main-sequence band (static layer) ----------------------
+# every mass at its own temperature and luminosity, using the same
+# metallicity-aware rules as star_state so the star sits exactly on the
+# band while it is on the main sequence
+Ml = np.geomspace(0.1, 300, 200)
+ms_L = Ml ** 3.5 * zr ** -0.1
+ms_T = SUN_T * (ms_L / (Ml ** 0.8) ** 2) ** 0.25
+ms_df = pd.DataFrame({"mass": Ml, "temp_K": ms_T, "lum": ms_L})
+ms_df = ms_df[(ms_df["lum"] >= L_MIN) & (ms_df["lum"] <= L_MAX)]
+ms_band = alt.Chart(ms_df).mark_line(
+    strokeWidth=14, color="#3a4150", opacity=0.9,
+    strokeCap="round").encode(x=HX, y=HY, order="mass:Q")
 
-def region(lo, hi, keep=None):
-    df = pd.DataFrame({"mass": Ml, "lo": np.clip(lo, Y0, Y1),
-                       "hi": np.clip(hi, Y0, Y1)})
-    if keep is not None:
-        df = df[keep]
-    return df[df["hi"] > df["lo"]]
+# ---- NEW (5): solar-metallicity reference line -----------------------
+# Metallicity only scales luminosity by zr ** -0.1, a shift too small to
+# see on ten decades without something to compare against. This dashed
+# line is the main sequence at Z = 0.02; the thick band moves away from
+# it as the metallicity slider moves.
+ref_L = Ml ** 3.5
+ref_T = SUN_T * (ref_L / (Ml ** 0.8) ** 2) ** 0.25
+ref_df = pd.DataFrame({"mass": Ml, "temp_K": ref_T, "lum": ref_L})
+ref_df = ref_df[(ref_df["lum"] >= L_MIN) & (ref_df["lum"] <= L_MAX)]
+ms_ref = alt.Chart(ref_df).mark_line(
+    strokeWidth=1.5, color="#DAA520", strokeDash=[4, 4],
+    opacity=0.8).encode(x=HX, y=HY, order="mass:Q")
+ref_label = alt.Chart(pd.DataFrame(
+    {"temp_K": [30000], "lum": [3e5]})).mark_text(
+    align="left", dx=8, fontSize=10, color="#DAA520").encode(
+    x=HX, y=HY, text=alt.value("solar metallicity"))
 
+# ---- NEW (3): white-dwarf cooling track (optional context) -----------
+wd_T = np.geomspace(3500, 150000, 80)
+wd_df = pd.DataFrame({"temp_K": wd_T,
+                      "lum": 0.009 ** 2 * (wd_T / SUN_T) ** 4})
+wd_df = wd_df[wd_df["lum"] >= L_MIN]
+wd_track = alt.Chart(wd_df).mark_line(
+    strokeWidth=2, color="#b7aec4", strokeDash=[5, 4],
+    opacity=0.7).encode(x=HX, y=HY)
 
-floor = np.full_like(Ml, Y0)
-ceiling = np.full_like(Ml, Y1)
-stages = [(region(floor, pre_l), "#4a3118")]                # protostar
-for n, blo, bhi in zip("MKGFABO", cls_bounds[:-1], cls_bounds[1:]):
-    seg = (Ml >= blo) & (Ml <= bhi)
-    stages.append((region(pre_l, ms_l, seg), rgb_str(CLS_T[n])))
-stages += [
-    (region(ms_l, g_l, Ml >= 0.25), "#c73b25"),             # giant
-    (region(ms_l, ceiling, Ml <= 0.25), "#b7aec4"),
-    (region(g_l, ceiling, (Ml >= 0.25) & (Ml <= 8)), "#b7aec4"),
-    (region(g_l, ceiling, (Ml >= 8) & (Ml <= 25)), "#7f7590"),
-    (region(g_l, ceiling, Ml >= 25), "#4a4256"),            # black hole
-]
-areas = [alt.Chart(df).mark_area(opacity=1, color=col).encode(
-             x=PX, y=PY, y2=alt.Y2("hi"))
-         for df, col in stages]
+# ---- NEW (3): spectral-class boundaries and letters (optional) -------
+cls_edges = pd.DataFrame({"temp_K": [3700, 5200, 6000, 7500, 10000, 30000]})
+cls_rules = alt.Chart(cls_edges).mark_rule(
+    color="#2b303b", strokeDash=[2, 3]).encode(x=HX)
+cls_letters = alt.Chart(pd.DataFrame({
+    "temp_K": [3050, 4400, 5580, 6700, 8700, 17300, 45000],
+    "lum": [3e5] * 7,
+    "t": list("MKGFABO"),
+})).mark_text(fontSize=11, fontWeight=600, color="#8a8f98").encode(
+    x=HX, y=HY, text="t:N")
 
-sn_keep = Ml >= 8
-sn_line = alt.Chart(pd.DataFrame(
-    {"mass": Ml[sn_keep], "lo": np.clip(g_l[sn_keep], Y0, Y1)})
-    ).mark_line(color="#ccff00", strokeWidth=0.75).encode(x=PX, y=PY)
-uni_rule = alt.Chart(pd.DataFrame({"lo": [13.8]})).mark_rule(
-    color="#8a2be2", strokeWidth=2, strokeDash=[6, 4],
-    opacity=0.8).encode(y=PY)
-
-plane_labels = alt.Chart(pd.DataFrame({
-    "mass": [0.7, 2.5, 80],
-    "lo":   [1.2e-3, 50.0, 0.1],
-    "t":    ["protostars", "white dwarfs", "black holes"],
-    "c":    ["#f5f2ea", "#26323c", "#f5f2ea"],
+# ---- NEW (3): region labels (optional) -------------------------------
+hr_labels = alt.Chart(pd.DataFrame({
+    "temp_K": [9000, 4300, 5500, 22000],
+    "lum":    [2e3, 150, 3e4, 4e-4],
+    "t":      ["main sequence", "giants", "supergiants", "white dwarfs"],
+    "c":      ["#8a8f98", "#c73b25", "#e0a060", "#b7aec4"],
 })).mark_text(fontSize=11).encode(
-    x=PX, y=PY, text="t:N",
+    x=HX, y=HY, text="t:N",
     color=alt.Color("c:N", scale=None, legend=None))
-uni_label = alt.Chart(pd.DataFrame(
-    {"mass": [0.105], "lo": [16.5]})).mark_text(
-    align="left", fontSize=9, color="#8a2be2").encode(
-    x=PX, y=PY, text=alt.value("age of the universe"))
-ns_label = alt.Chart(pd.DataFrame(
-    {"mass": [14.1], "lo": [0.47]})).mark_text(
-    fontSize=11, color="#f5f2ea").encode(
-    x=PX, y=PY, text=alt.value(["neutron", "stars"]))
-giants_label = alt.Chart(pd.DataFrame(
-    {"mass": [0.40], "lo": [205.0]})).mark_text(
-    fontSize=11, angle=49, color="#c73b25").encode(
-    x=PX, y=PY, text=alt.value("giants"))
-ms_label = alt.Chart(pd.DataFrame(
-    {"mass": [4.2], "lo": [0.06]})).mark_text(
-    fontSize=12, angle=47, color="#5a616b").encode(
-    x=PX, y=PY, text=alt.value("main sequence"))
-sn_label = alt.Chart(pd.DataFrame(
-    {"mass": [13], "lo": [0.038]})).mark_text(
-    fontSize=10, angle=44, color="#ccff00").encode(
-    x=PX, y=PY, text=alt.value("supernova"))
 
-cls_mid = [float(np.sqrt(blo * bhi))
-           for blo, bhi in zip(cls_bounds[:-1], cls_bounds[1:])]
-cls_lo = list(np.clip([0.548 * m ** -2 for m in cls_mid],
-                      1.5e-4, None))
-cls_lo[0] = 1.8
-cls_mid[-1] = 40.0
-cls_lo[-1] = 3.4e-4
-cls_labels = alt.Chart(pd.DataFrame({
-    "mass": cls_mid, "lo": cls_lo, "t": list("MKGFABO"),
-})).mark_text(fontSize=10, fontWeight=600, color="#26323c").encode(
-    x=PX, y=PY, text="t:N")
+# ---- NEW (3): the Sun, for reference ---------------------------------
+sun_df = pd.DataFrame({"temp_K": [SUN_T], "lum": [1.0]})
+sun_pt = alt.Chart(sun_df).mark_circle(
+    size=55, color="#1e7d32", opacity=1).encode(x=HX, y=HY)
+sun_txt = alt.Chart(sun_df).mark_text(
+    dy=14, fontSize=11, fontWeight=700, color="#1e7d32").encode(
+    x=HX, y=HY, text=alt.value("Sun"))
 
-sun_pt = alt.Chart(pd.DataFrame(
-    {"mass": [1.0], "lo": [4.6]})).mark_circle(
-    size=55, color="#1e7d32", opacity=1).encode(x=PX, y=PY)
-sun_txt = alt.Chart(pd.DataFrame(
-    {"mass": [1.0], "lo": [1.7]})).mark_text(
-    fontSize=11, fontWeight=700, color="#1e7d32").encode(
-    x=PX, y=PY, text=alt.value("Sun"))
-
-# your star, riding the slider signals via the filtered grid row
-you = alt.Chart(grid).transform_filter(pick).mark_point(
+# ---- CHANGED (3): your star now rides temp_K / lum, not mass / age ---
+# rows with no luminosity (supernova, no remnant, neutron star,
+# black hole) are filtered out and simply vanish from the diagram
+you = alt.Chart(grid).transform_filter(
+    pick + " && isValid(datum.lum) && isValid(datum.temp_K)"
+).mark_point(
     shape=("M 0 -1 L 0.24 -0.31 L 0.95 -0.31 L 0.38 0.12 L 0.59 0.81"
            " L 0 0.38 L -0.59 0.81 L -0.38 0.12 L -0.95 -0.31"
            " L -0.24 -0.31 Z"),
     filled=True, size=280, color="#FFC300",
-    stroke="#8C6A2F", strokeWidth=1.2, opacity=1).encode(
-    x=alt.X("mass:Q", scale=MASS_SCALE),
-    y=alt.Y("age:Q", scale=AGE_SCALE))
+    stroke="#8C6A2F", strokeWidth=1.2, opacity=1).encode(x=HX, y=HY)
 
-plane = alt.layer(
-    *areas, sn_line, uni_rule, plane_labels, uni_label, ns_label,
-    giants_label, ms_label, sn_label, cls_labels, sun_pt, sun_txt,
-    you,
+# ---- NEW (3): the HR diagram layer, replacing `plane` ----------------
+hr = alt.layer(
+    cls_rules, ms_band, ms_ref, ref_label,        # CHANGED (5)
+    wd_track, cls_letters, hr_labels,
+    sun_pt, sun_txt, you,
 ).properties(width=470, height=440,
-             title=alt.Title("Stellar mass-age phase plane",
+             title=alt.Title("Hertzsprung-Russell diagram",
                              color="#f0f0f0"))
 
-chart = alt.hconcat(portrait, plane).add_params(
+# ---- CHANGED (3): hconcat uses `hr` instead of `plane` ---------------
+chart = alt.hconcat(portrait, hr).add_params(
     m_sel, a_sel).configure(background="#000000").configure_view(
     fill="#000000", stroke=None)
 
-st.altair_chart(chart, use_container_width=False)
+# ---- CHANGED (4): width="content" replaces deprecated argument -------
+# Was:   st.altair_chart(chart, use_container_width=False)
+st.altair_chart(chart, width="content")
